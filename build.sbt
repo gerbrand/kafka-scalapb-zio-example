@@ -8,7 +8,11 @@ lazy val root = project
 
     scalaVersion := scala3Version,
 
-    libraryDependencies += "dev.zio" %% "zio" % "2.0.13",
-      libraryDependencies += "dev.zio" %% "zio-kafka" % "2.3.0",
-        libraryDependencies += "org.scalameta" %% "munit" % "0.7.29" % Test
+    libraryDependencies ++= Seq("dev.zio" %% "zio" % "2.0.13",
+    "dev.zio" %% "zio-kafka" % "2.3.0",
+      "io.apicurio" % "apicurio-registry-serdes-protobuf-serde" % "2.4.2.Final"),
+    Compile / PB.targets := Seq(
+      scalapb.gen() -> (Compile / sourceManaged).value / "scalapb"
+    ),
+      libraryDependencies += "org.scalameta" %% "munit" % "0.7.29" % Test,
   )

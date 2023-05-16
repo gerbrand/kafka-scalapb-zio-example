@@ -1,32 +1,48 @@
-import zio._
-import zio.Console._
-import zio._
-import zio.kafka.consumer._
+import io.apicurio.registry.serde.AbstractKafkaSerializer
+import io.apicurio.registry.serde.protobuf.{ProtobufSerde, ProtobufSerdeHeaders}
+import io.apicurio.registry.utils.protobuf.schema.ProtobufSchema
+import org.apache.kafka.clients.producer.ProducerRecord
+import org.apache.kafka.common.header.Headers
+import org.apache.kafka.common.header.internals.RecordHeaders
+import tutorial.addressbook.Person
+import zio.*
+import zio.Console.*
+import zio.*
+import zio.kafka.consumer.*
 import zio.kafka.producer.{Producer, ProducerSettings}
-import zio.kafka.serde._
+import zio.kafka.serde.*
 import zio.stream.ZStream
 
 object MyApp extends ZIOAppDefault {
 
+  val samplePersons = Seq(Person("John", 123), Person("Jane", 456))
+
+  val configs = new java.util.HashMap[String, AnyRef]()
+  val protobufSerdeHeaders = new ProtobufSerdeHeaders(configs, false)
+
+val topic = "persons"
   val producer: ZStream[Producer, Throwable, Nothing] =
-    ZStream
-      .repeatZIO(Random.nextIntBetween(0, Int.MaxValue))
+    ZStream.fromIterable(samplePersons)
       .schedule(Schedule.fixed(2.seconds))
-      .mapZIO { random =>
-        Producer.produce[Any, Long, String](
-          topic = "random",
-          key = random % 4,
-          value = random.toString,
+      .mapZIO { (person: Person) => {
+        val headers: Headers = new RecordHeaders
+        protobufSerdeHeaders.addProtobufTypeNameHeader(headers, "Persons")
+
+        val record = new ProducerRecord[Long, Array[Byte]](topic, null, null, person.id, person.toByteArray, headers)
+
+        Producer.produce[Any, Long, Array[Byte]](
+          record,
           keySerializer = Serde.long,
-          valueSerializer = Serde.string
+          valueSerializer = Serde.byteArray
         )
+      }
       }
       .drain
 
   val consumer: ZStream[Consumer, Throwable, Nothing] =
     Consumer
-      .plainStream(Subscription.topics("random"), Serde.long, Serde.string)
-      .tap(r => Console.printLine(r.value))
+      .plainStream(Subscription.topics("persons"), Serde.long, Serde.byteArray)
+      .tap(r => Console.print(Person.parseFrom(r.value)))
       .map(_.offset)
       .aggregateAsync(Consumer.offsetBatches)
       .mapZIO(_.commit)
@@ -47,7 +63,10 @@ object MyApp extends ZIOAppDefault {
     )
 
   override def run =
-    producer.merge(consumer)
-      .runDrain
-      .provide(producerLayer, consumerLayer)
+    for {
+      _ <- producer.merge(consumer)
+        .runDrain
+        .provide(producerLayer, consumerLayer)
+      _ <-  ZIO.system.exit
+    } yield ()
 }
